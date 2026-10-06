@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Assistant · TO-DO-List</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <div class="page-title">
+      <div><h1>AI Assistant</h1><small>Ask it to plan your day, find what is overdue, or review your progress.</small></div>
+      <span class="status-chip" id="status">Checking…</span>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <div class="chat" id="chat"></div>
+        <div class="chips" id="chips"></div>
+        <div class="row">
+          <input id="msg" placeholder="Ask anything about your tasks…" maxlength="1000">
+          <button class="ghost mic" id="mic" title="Speak your question">🎤</button>
+          <button id="send">Send</button>
+        </div>
+        <p><button class="ghost small" id="clear">Clear chat</button></p>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>Break a goal into tasks</h3>
+          <p><small>Describe a big goal. The AI creates a step-by-step list of tasks with deadlines and saves them to your task list.</small></p>
+          <label>Goal<input id="goal" placeholder="e.g. Finish SEPM project report"></label>
+          <label>Deadline (optional)<input id="deadline" type="date"></label>
+          <div class="row end"><button id="plan">Create tasks</button></div>
+          <div id="planResult"></div>
+        </div>
+        <div class="card">
+          <h3>Try asking</h3>
+          <p><small>"What should I do first today?" · "Which tasks are overdue?" · "How am I doing this week?" · "Help me organise my study tasks"</small></p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="common.js"></script>
+  <script>
+    const chat = () => $('#chat');
+    const bubble = (role, text) => {
+      const el = h('div', { class: 'msg ' + role }, text);
+      chat().append(el); chat().scrollTop = chat().scrollHeight; return el;
+    };
+
+    async function send(text) {
+      text = (text || $('#msg').value).trim();
+      if (!text) return;
+      $('#msg').value = '';
+      bubble('user', text);
+      const wait = bubble('assistant', 'Thinking…');
+      try {
+        const r = await api('/ai/chat', 'POST', { message: text });
+        wait.textContent = r.reply;
+      } catch (e) { wait.textContent = 'Sorry, something went wrong: ' + e.message; }
+      chat().scrollTop = chat().scrollHeight;
+    }
+
+    async function init() {
+      const st = await api('/ai/status');
+      $('#status').textContent = st.connected ? '● Claude connected' : '○ Offline smart mode';
+      $('#status').classList.toggle('on', st.connected);
+      $('#status').title = st.connected ? 'Model: ' + st.model : 'Set ANTHROPIC_API_KEY on the server to use Claude';
+
+      const hist = await api('/ai/history');
+      if (hist.length) hist.forEach((m) => bubble(m.role, m.content));
+      else bubble('assistant', 'Hi! I can plan your day, point out deadlines, and track your progress. Pick a suggestion below or type a question.');
+
+      $('#chips').replaceChildren(...['Plan my day', 'What is overdue?', 'How am I doing?', 'Which task should I start first?']
+        .map((q) => h('button', { onclick: () => send(q) }, q)));
+    }
+
+    if (initPage('ai')) {
+      init();
+      $('#send').onclick = () => send();
+      $('#msg').addEventListener('keydown', (e) => e.key === 'Enter' && send());
+      $('#mic').onclick = () => startVoice($('#msg'), $('#mic'), (text) => send(text));
+      $('#clear').onclick = async () => {
+        await api('/ai/history', 'DELETE'); chat().replaceChildren(); bubble('assistant', 'Chat cleared. What would you like to do?');
+      };
+      $('#plan').onclick = async () => {
+        const goal = $('#goal').value.trim();
+        if (!goal) return toast('Type a goal first', 'error');
+        $('#plan').disabled = true; $('#plan').textContent = 'Planning…';
+        try {
+          const r = await api('/ai/breakdown', 'POST', { goal, deadline: $('#deadline').value });
+          $('#planResult').replaceChildren(
+            h('p', {}, `✅ ${r.created.length} tasks added` + (r.mode === 'offline' ? ' (offline template)' : ' by Claude')),
+            ...r.created.map((t) => h('div', { class: 'meta' }, `• ${t.title} - due ${t.due_date}`)),
+            h('p', {}, h('a', { href: 'tasks.html' }, 'Open the task list')));
+          toast('Tasks created', 'success');
+        } catch (e) { toast(e.message, 'error'); }
+        $('#plan').disabled = false; $('#plan').textContent = 'Create tasks';
+      };
+    }
+  </script>
+</body>
+</html>
